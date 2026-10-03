@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Medical Chatbot</title>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+    <div class="chat-container">
+
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="logo">
+                <div class="logo-avatar">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Doctor">
+                        <defs>
+                            <clipPath id="docClip">
+                                <circle cx="60" cy="60" r="60" />
+                            </clipPath>
+                        </defs>
+                        <g clip-path="url(#docClip)">
+                            <rect width="120" height="120" fill="#f7c948" />
+                            <ellipse cx="60" cy="62" rx="25" ry="36" fill="#3b2a20" />
+                            <path d="M18 120C18 92 38 84 60 84s42 8 42 36z" fill="#ffffff" />
+                            <path d="M47 86l13 24 13-24z" fill="#0f9d8f" />
+                            <rect x="53" y="70" width="14" height="18" rx="5" fill="#f1c9a5" />
+                            <ellipse cx="60" cy="54" rx="17" ry="20" fill="#f6d5b5" />
+                            <path d="M41 54C38 30 52 25 61 25c10 0 21 6 18 29-4-11-11-16-19-16-8 0-15 5-19 16z"
+                                fill="#3b2a20" />
+                            <circle cx="53" cy="57" r="1.8" fill="#3b2a20" />
+                            <circle cx="67" cy="57" r="1.8" fill="#3b2a20" />
+                            <path d="M55 66q5 4 10 0" stroke="#c0504d" stroke-width="1.8" fill="none"
+                                stroke-linecap="round" />
+                            <path d="M43 88c-3 16 12 18 15 9" stroke="#64748b" stroke-width="2.5" fill="none"
+                                stroke-linecap="round" />
+                            <circle cx="58" cy="99" r="3.5" fill="#94a3b8" />
+                        </g>
+                    </svg>
+
+                    <span class="online-dot"></span>
+
+
+                </div>
+                <div>
+                    <h1>Medical Chatbot</h1>
+                    <p>Ask me anything!</p>
+                </div>
+            </div>
+
+            <div class="status">
+                <span class="status-dot"></span>
+                Online
+            </div>
+        </header>
+
+
+        <!-- Chat Area -->
+        <main class="chat-box" id="chatBox">
+
+            <!-- Welcome Message -->
+            <div class="message bot-message">
+                <div class="avatar">⚕</div>
+
+                <div class="message-content">
+                    <div class="sender">MedBot</div>
+
+                    <div class="bubble">
+                        Hello! 👋<br><br>
+                        I'm your AI medical assistant. Ask me a question
+                        about medical conditions, symptoms, or health-related
+                        topics.
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+
+        <!-- Input Area -->
+        <form id="chatForm" class="input-area">
+
+            <input type="text" id="messageInput" name="msg" placeholder="Ask a medical question..." autocomplete="off"
+                required>
+
+            <button type="submit" id="sendButton">
+                ➤
+            </button>
+
+        </form>
+
+
+        <!-- Disclaimer -->
+        <div class="disclaimer">
+            ⚠️ MedBot provides informational responses and is not a
+            substitute for professional medical advice.
+        </div>
+
+    </div>
+
+
+    <script>
+
+        const chatBox = document.getElementById("chatBox");
+        const chatForm = document.getElementById("chatForm");
+        const messageInput = document.getElementById("messageInput");
+        const sendButton = document.getElementById("sendButton");
+
+
+        function addMessage(message, type) {
+
+            const wrapper = document.createElement("div");
+
+            wrapper.className =
+                type === "user"
+                    ? "message user-message"
+                    : "message bot-message";
+
+
+            if (type === "user") {
+
+                wrapper.innerHTML = `
+                    <div class="message-content">
+                        <div class="sender">You</div>
+                        <div class="bubble">${escapeHtml(message)}</div>
+                    </div>
+                `;
+
+            } else {
+
+                wrapper.innerHTML = `
+                    <div class="avatar">⚕</div>
+
+                    <div class="message-content">
+                        <div class="sender">MedBot</div>
+                        <div class="bubble">${message}</div>
+                    </div>
+                `;
+
+            }
+
+            chatBox.appendChild(wrapper);
+
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+
+        async function sendMessage(message) {
+
+            if (!message.trim()) return;
+
+
+            addMessage(message, "user");
+
+            messageInput.value = "";
+
+            sendButton.disabled = true;
+
+            const loadingId = "loading-" + Date.now();
+
+            const loading = document.createElement("div");
+
+            loading.className = "message bot-message";
+
+            loading.id = loadingId;
+
+            loading.innerHTML = `
+                <div class="avatar">⚕</div>
+
+                <div class="message-content">
+                    <div class="sender">MedBot</div>
+
+                    <div class="bubble loading">
+                        Thinking<span>.</span><span>.</span><span>.</span>
+                    </div>
+                </div>
+            `;
+
+            chatBox.appendChild(loading);
+
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+
+            try {
+
+                const formData = new FormData();
+
+                formData.append("msg", message);
+
+
+                const response = await fetch("/get", {
+                    method: "POST",
+                    body: formData
+                });
+
+
+                const answer = await response.text();
+
+
+                document.getElementById(loadingId).remove();
+
+                addMessage(
+                    escapeHtml(answer).replace(/\n/g, "<br>"),
+                    "bot"
+                );
+
+            } catch (error) {
+
+                document.getElementById(loadingId).remove();
+
+                addMessage(
+                    "Sorry, something went wrong. Please try again.",
+                    "bot"
+                );
+
+                console.error(error);
+
+            } finally {
+
+                sendButton.disabled = false;
+
+                messageInput.focus();
+
+            }
+        }
+
+
+        chatForm.addEventListener("submit", function (event) {
+
+            event.preventDefault();
+
+            sendMessage(messageInput.value);
+
+        });
+
+
+        function askQuestion(question) {
+
+            messageInput.value = question;
+
+            sendMessage(question);
+
+        }
+
+
+        function escapeHtml(text) {
+
+            const div = document.createElement("div");
+
+            div.textContent = text;
+
+            return div.innerHTML;
+
+        }
+
+    </script>
+
+</body>
+
+</html>
