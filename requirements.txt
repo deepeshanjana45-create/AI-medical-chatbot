@@ -1,4 +1,3 @@
-sentence-transformers
 langchain
 flask
 pypdf
@@ -8,4 +7,3 @@ langchain-community
 langchain-openai
 langchain-experimental
 gunicorn
-langchain-huggingface
