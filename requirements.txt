@@ -7,3 +7,4 @@ pinecone
 langchain-community
 langchain-openai
 langchain-experimental
+gunicorn
