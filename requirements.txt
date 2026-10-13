@@ -8,3 +8,5 @@ langchain-openai
 langchain-experimental
 gunicorn
 huggingface_hub
+sentence-transformers
+requests

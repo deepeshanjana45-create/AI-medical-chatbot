@@ -1,4 +1,7 @@
 .env
 __pycache__/
 *.pyc
+src/__pycache__/
 *.egg-info/
+output_test.txt
+rag_chain_answer.txt

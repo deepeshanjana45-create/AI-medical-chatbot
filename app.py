@@ -55,9 +55,9 @@ retriever = RunnableLambda(
 )
 
 
-# -----------------------------
-# HUGGING FACE
-# -----------------------------
+import requests
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 client = InferenceClient(
     api_key=HF_TOKEN,
@@ -65,30 +65,66 @@ client = InferenceClient(
 )
 
 
-def hf_generate(prompt_value):
-
-    messages = []
-
+def generate_response(prompt_value):
+    system_text = ""
+    user_text = ""
     for msg in prompt_value.to_messages():
+        if msg.type == "system":
+            system_text += msg.content + "\n"
+        else:
+            user_text += msg.content + "\n"
 
-        role = "system" if msg.type == "system" else "user"
+    # 1. Use clean conversational Gemini model
+    if GEMINI_API_KEY:
+        models_to_try = [
+            "gemini-flash-lite-latest",
+            "gemini-flash-latest",
+            "gemini-pro-latest"
+        ]
+        for model_name in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+                payload = {
+                    "system_instruction": {
+                        "parts": [{"text": system_text.strip()}]
+                    },
+                    "contents": [
+                        {"parts": [{"text": user_text.strip()}]}
+                    ],
+                    "generationConfig": {
+                        "maxOutputTokens": 1000,
+                        "temperature": 0.3
+                    }
+                }
+                res = requests.post(url, json=payload, timeout=20)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        parts = candidates[0]["content"].get("parts", [])
+                        if parts and "text" in parts[0]:
+                            return parts[0]["text"].strip()
+            except Exception as err:
+                print(f"Error calling {model_name}:", err)
 
-        messages.append({
-            "role": role,
-            "content": msg.content
-        })
+    # 2. Fallback to Hugging Face if configured
+    if HF_TOKEN:
+        try:
+            combined = f"System: {system_text}\nUser: {user_text}"
+            response = client.chat.completions.create(
+                model="Qwen/Qwen2.5-1.5B-Instruct",
+                messages=[{"role": "user", "content": combined}],
+                max_tokens=600,
+                temperature=0.4
+            )
+            return response.choices[0].message.content
+        except Exception as err:
+            print("Hugging Face error:", err)
 
-    response = client.chat.completions.create(
-        model="Qwen/Qwen2.5-1.5B-Instruct",
-        messages=messages,
-        max_tokens=200,
-        temperature=0.4
-    )
-
-    return response.choices[0].message.content
+    return "Sorry, I could not generate a response. Please try again."
 
 
-llm = RunnableLambda(hf_generate)
+llm = RunnableLambda(generate_response)
 
 
 # -----------------------------
@@ -140,16 +176,20 @@ def home():
 
 @app.route("/get", methods=["GET", "POST"])
 def chat():
-
-    msg = request.form["msg"]
-
-    response = rag_chain.invoke({
-        "input": msg
-    })
-
-    print("Response:", response["answer"])
-
-    return str(response["answer"])
+    try:
+        msg = request.form["msg"]
+        response = rag_chain.invoke({
+            "input": msg
+        })
+        answer = str(response["answer"])
+        try:
+            print("Response:", answer[:150].encode("ascii", errors="replace").decode("ascii"))
+        except Exception:
+            pass
+        return answer
+    except Exception as e:
+        print("Error during chat processing:", e)
+        return "I apologize, but an error occurred while processing your request. Please try again."
 
 
 # -----------------------------

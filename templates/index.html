@@ -202,10 +202,17 @@
                 const answer = await response.text();
 
 
+                function formatBotMessage(text) {
+                    let formatted = escapeHtml(text);
+                    formatted = formatted.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+                    formatted = formatted.replace(/^\s*[\*\-]\s+/gm, "• ");
+                    return formatted.replace(/\n/g, "<br>");
+                }
+
                 document.getElementById(loadingId).remove();
 
                 addMessage(
-                    escapeHtml(answer).replace(/\n/g, "<br>"),
+                    formatBotMessage(answer),
                     "bot"
                 );
 

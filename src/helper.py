@@ -28,21 +28,19 @@ def text_split(extracted_data):
     return text_chunks
 
 
-class HuggingFaceRemoteEmbeddings:
+from sentence_transformers import SentenceTransformer
+
+
+class LocalHuggingFaceEmbeddings:
     def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2"):
-        self.client = InferenceClient(
-            api_key=os.getenv("HF_TOKEN")
-        )
-        self.model_name = model_name
+        self.model = SentenceTransformer(model_name)
 
     def embed_query(self, text):
-        result = self.client.feature_extraction(
-            text,
-            model=self.model_name
-        )
+        return self.model.encode(text).tolist()
 
-        return np.asarray(result).reshape(-1).tolist()
+    def embed_documents(self, texts):
+        return self.model.encode(texts).tolist()
 
 
 def download_hugging_face_embeddings():
-    return HuggingFaceRemoteEmbeddings()
+    return LocalHuggingFaceEmbeddings()
