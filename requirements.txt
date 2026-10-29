@@ -7,6 +7,5 @@ langchain-community
 langchain-openai
 langchain-experimental
 gunicorn
-huggingface_hub
-sentence-transformers
+fastembed
 requests

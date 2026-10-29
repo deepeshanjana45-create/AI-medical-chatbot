@@ -1,10 +1,7 @@
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 import os
-import numpy as np
-
 
 load_dotenv()
 
@@ -28,19 +25,25 @@ def text_split(extracted_data):
     return text_chunks
 
 
-from sentence_transformers import SentenceTransformer
+class FastEmbedEmbeddings:
+    """Lightweight embeddings using fastembed (ONNX runtime, no PyTorch).
+    Uses BAAI/bge-small-en-v1.5 which produces 384-dim vectors — compatible
+    with the existing Pinecone index built on all-MiniLM-L6-v2 (also 384-dim).
+    RAM usage: ~60MB vs ~500MB for sentence-transformers + PyTorch.
+    """
 
-
-class LocalHuggingFaceEmbeddings:
-    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2"):
-        self.model = SentenceTransformer(model_name)
+    def __init__(self, model_name="BAAI/bge-small-en-v1.5"):
+        from fastembed import TextEmbedding
+        self.model = TextEmbedding(model_name=model_name)
 
     def embed_query(self, text):
-        return self.model.encode(text).tolist()
+        embeddings = list(self.model.embed([text]))
+        return embeddings[0].tolist()
 
     def embed_documents(self, texts):
-        return self.model.encode(texts).tolist()
+        embeddings = list(self.model.embed(texts))
+        return [e.tolist() for e in embeddings]
 
 
 def download_hugging_face_embeddings():
-    return LocalHuggingFaceEmbeddings()
+    return FastEmbedEmbeddings()

@@ -1,10 +1,10 @@
 from flask import Flask, render_template, request
 from src.helper import download_hugging_face_embeddings
 from pinecone import Pinecone
-from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableLambda
 import os
+import requests
 
 from src.prompt import *
 
@@ -19,6 +19,7 @@ app = Flask(__name__)
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if PINECONE_API_KEY:
     os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
@@ -27,21 +28,25 @@ if HF_TOKEN:
 
 
 # -----------------------------
-# EMBEDDINGS
-# -----------------------------
-
-embeddings = download_hugging_face_embeddings()
-
-
-# -----------------------------
-# PINECONE
+# EMBEDDINGS & PINECONE (LAZY LOADED FOR FAST STARTUP)
 # -----------------------------
 
 index_name = "medicalbot"
+_embeddings = None
+_pinecone_index = None
 
-pc = Pinecone(api_key=PINECONE_API_KEY)
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = download_hugging_face_embeddings()
+    return _embeddings
 
-pinecone_index = pc.Index(index_name)
+def get_pinecone_index():
+    global _pinecone_index
+    if _pinecone_index is None:
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        _pinecone_index = pc.Index(index_name)
+    return _pinecone_index
 
 
 # -----------------------------
@@ -49,21 +54,11 @@ pinecone_index = pc.Index(index_name)
 # -----------------------------
 
 retriever = RunnableLambda(
-    lambda query: pinecone_index.query(
-        vector=embeddings.embed_query(query),
+    lambda query: get_pinecone_index().query(
+        vector=get_embeddings().embed_query(query),
         top_k=3,
         include_metadata=True
     )
-)
-
-
-import requests
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-client = InferenceClient(
-    api_key=HF_TOKEN,
-    provider="featherless-ai"
 )
 
 
@@ -76,7 +71,7 @@ def generate_response(prompt_value):
         else:
             user_text += msg.content + "\n"
 
-    # 1. Use clean conversational Gemini model
+    # 1. Use Gemini (primary)
     if GEMINI_API_KEY:
         models_to_try = [
             "gemini-flash-lite-latest",
@@ -112,8 +107,10 @@ def generate_response(prompt_value):
     # 2. Fallback to Hugging Face if configured
     if HF_TOKEN:
         try:
+            from huggingface_hub import InferenceClient
+            hf_client = InferenceClient(api_key=HF_TOKEN, provider="featherless-ai")
             combined = f"System: {system_text}\nUser: {user_text}"
-            response = client.chat.completions.create(
+            response = hf_client.chat.completions.create(
                 model="Qwen/Qwen2.5-1.5B-Instruct",
                 messages=[{"role": "user", "content": combined}],
                 max_tokens=600,
@@ -134,7 +131,6 @@ llm = RunnableLambda(generate_response)
 # -----------------------------
 
 def format_docs(result):
-
     return "\n\n".join(
         match["metadata"]["text"]
         for match in result["matches"]
@@ -199,8 +195,9 @@ def chat():
 # -----------------------------
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
     app.run(
         host="0.0.0.0",
-        port=8080,
-        debug=True
+        port=port,
+        debug=False
     )
