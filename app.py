@@ -20,8 +20,10 @@ app = Flask(__name__)
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
-os.environ["HF_TOKEN"] = HF_TOKEN
+if PINECONE_API_KEY:
+    os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
+if HF_TOKEN:
+    os.environ["HF_TOKEN"] = HF_TOKEN
 
 
 # -----------------------------
