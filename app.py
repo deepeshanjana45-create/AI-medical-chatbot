@@ -13,6 +13,9 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# Persistent HTTP session for fast connection reuse
+http_session = requests.Session()
+
 
 # -----------------------------
 # API KEYS (handles typo PINECONE_APT_KEY as fallback)
@@ -65,13 +68,13 @@ threading.Thread(target=_prewarm, daemon=True).start()
 
 
 # -----------------------------
-# RETRIEVER
+# RETRIEVER (top_k=2 for faster prompt processing)
 # -----------------------------
 
 retriever = RunnableLambda(
     lambda query: get_pinecone_index().query(
         vector=get_embeddings().embed_query(query),
-        top_k=3,
+        top_k=2,
         include_metadata=True
     )
 )
@@ -91,8 +94,7 @@ def generate_response(prompt_value):
     if api_key:
         models_to_try = [
             "gemini-flash-lite-latest",
-            "gemini-flash-latest",
-            "gemini-pro-latest"
+            "gemini-flash-latest"
         ]
         
         safety_settings = [
@@ -102,6 +104,7 @@ def generate_response(prompt_value):
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
 
+        # Optimized token budget: fast concise bullet points (350 tokens max)
         payload = {
             "system_instruction": {
                 "parts": [{"text": system_text.strip()}]
@@ -111,15 +114,15 @@ def generate_response(prompt_value):
             ],
             "safetySettings": safety_settings,
             "generationConfig": {
-                "maxOutputTokens": 800,
-                "temperature": 0.3
+                "maxOutputTokens": 350,
+                "temperature": 0.2
             }
         }
 
         for model_name in models_to_try:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                res = requests.post(url, json=payload, timeout=45)
+                res = http_session.post(url, json=payload, timeout=30)
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -128,15 +131,14 @@ def generate_response(prompt_value):
                         if parts and "text" in parts[0]:
                             return parts[0]["text"].strip()
                 elif res.status_code == 400:
-                    # Fallback without system_instruction if rejected
                     simple_payload = {
                         "contents": [
                             {"parts": [{"text": f"{system_text.strip()}\n\n{user_text.strip()}"}]}
                         ],
                         "safetySettings": safety_settings,
-                        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3}
+                        "generationConfig": {"maxOutputTokens": 350, "temperature": 0.2}
                     }
-                    res2 = requests.post(url, json=simple_payload, timeout=45)
+                    res2 = http_session.post(url, json=simple_payload, timeout=30)
                     if res2.status_code == 200:
                         data2 = res2.json()
                         candidates2 = data2.get("candidates", [])
@@ -144,8 +146,6 @@ def generate_response(prompt_value):
                             parts2 = candidates2[0]["content"].get("parts", [])
                             if parts2 and "text" in parts2[0]:
                                 return parts2[0]["text"].strip()
-                else:
-                    print(f"Gemini API {model_name} status {res.status_code}: {res.text[:120]}")
             except Exception as err:
                 print(f"Error calling {model_name}:", err)
 
@@ -159,8 +159,8 @@ def generate_response(prompt_value):
             response = hf_client.chat.completions.create(
                 model="Qwen/Qwen2.5-1.5B-Instruct",
                 messages=[{"role": "user", "content": combined}],
-                max_tokens=600,
-                temperature=0.4
+                max_tokens=350,
+                temperature=0.3
             )
             return response.choices[0].message.content
         except Exception as err:
