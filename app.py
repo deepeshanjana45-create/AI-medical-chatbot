@@ -25,6 +25,7 @@ http_session = requests.Session()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if PINECONE_API_KEY:
     os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
@@ -87,6 +88,38 @@ def generate_response(prompt_value):
         else:
             user_text += msg.content + "\n"
 
+    # 1. Groq (100% Free & Lightning Fast ~0.8s) if key provided
+    groq_key = os.getenv("GROQ_API_KEY") or GROQ_API_KEY
+    if groq_key:
+        try:
+            headers = {
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json"
+            }
+            groq_payload = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": system_text.strip()},
+                    {"role": "user", "content": user_text.strip()}
+                ],
+                "max_tokens": 350,
+                "temperature": 0.2
+            }
+            res = http_session.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=groq_payload,
+                timeout=12
+            )
+            if res.status_code == 200:
+                data = res.json()
+                choices = data.get("choices", [])
+                if choices and "message" in choices[0]:
+                    return choices[0]["message"].get("content", "").strip()
+        except Exception as err:
+            print("Groq error, falling back to Gemini:", err)
+
+    # 2. Google Gemini (Free Tier)
     api_key = os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY
     if api_key:
         models_to_try = [
@@ -145,6 +178,7 @@ def generate_response(prompt_value):
             except Exception as err:
                 print(f"Error calling {model_name}:", err)
 
+    # 3. Fallback to Hugging Face if configured
     hf_tok = os.getenv("HF_TOKEN") or HF_TOKEN
     if hf_tok:
         try:
