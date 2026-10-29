@@ -23,9 +23,8 @@ http_session = requests.Session()
 # -----------------------------
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 if PINECONE_API_KEY:
     os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
@@ -88,97 +87,44 @@ def generate_response(prompt_value):
         else:
             user_text += msg.content + "\n"
 
-    # 1. Groq (100% Free & Lightning Fast ~0.8s) if key provided
+    # 1. Groq (Ultra-Fast 100% Free ~0.8s)
     groq_key = os.getenv("GROQ_API_KEY") or GROQ_API_KEY
     if groq_key:
-        try:
-            headers = {
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            }
-            groq_payload = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "system", "content": system_text.strip()},
-                    {"role": "user", "content": user_text.strip()}
-                ],
-                "max_tokens": 350,
-                "temperature": 0.2
-            }
-            res = http_session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=groq_payload,
-                timeout=12
-            )
-            if res.status_code == 200:
-                data = res.json()
-                choices = data.get("choices", [])
-                if choices and "message" in choices[0]:
-                    return choices[0]["message"].get("content", "").strip()
-        except Exception as err:
-            print("Groq error, falling back to Gemini:", err)
-
-    # 2. Google Gemini (Free Tier)
-    api_key = os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY
-    if api_key:
-        models_to_try = [
-            "gemini-flash-lite-latest",
-            "gemini-flash-latest"
+        groq_models = [
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-120b"
         ]
-
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
-
-        payload = {
-            "system_instruction": {
-                "parts": [{"text": system_text.strip()}]
-            },
-            "contents": [
-                {"parts": [{"text": user_text.strip()}]}
-            ],
-            "safetySettings": safety_settings,
-            "generationConfig": {
-                "maxOutputTokens": 300,
-                "temperature": 0.2
-            }
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json"
         }
-
-        for model_name in models_to_try:
+        for model in groq_models:
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                res = http_session.post(url, json=payload, timeout=25)
+                groq_payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_text.strip()},
+                        {"role": "user", "content": user_text.strip()}
+                    ],
+                    "max_tokens": 350,
+                    "temperature": 0.2
+                }
+                res = http_session.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json=groq_payload,
+                    timeout=10
+                )
                 if res.status_code == 200:
                     data = res.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        parts = candidates[0]["content"].get("parts", [])
-                        if parts and "text" in parts[0]:
-                            return parts[0]["text"].strip()
-                elif res.status_code == 400:
-                    simple_payload = {
-                        "contents": [
-                            {"parts": [{"text": f"{system_text.strip()}\n\n{user_text.strip()}"}]}
-                        ],
-                        "safetySettings": safety_settings,
-                        "generationConfig": {"maxOutputTokens": 300, "temperature": 0.2}
-                    }
-                    res2 = http_session.post(url, json=simple_payload, timeout=25)
-                    if res2.status_code == 200:
-                        data2 = res2.json()
-                        candidates2 = data2.get("candidates", [])
-                        if candidates2 and "content" in candidates2[0]:
-                            parts2 = candidates2[0]["content"].get("parts", [])
-                            if parts2 and "text" in parts2[0]:
-                                return parts2[0]["text"].strip()
+                    choices = data.get("choices", [])
+                    if choices and "message" in choices[0]:
+                        return choices[0]["message"].get("content", "").strip()
             except Exception as err:
-                print(f"Error calling {model_name}:", err)
+                print(f"Groq {model} error:", err)
 
-    # 3. Fallback to Hugging Face if configured
+    # 2. Fallback to Hugging Face if configured
     hf_tok = os.getenv("HF_TOKEN") or HF_TOKEN
     if hf_tok:
         try:
@@ -195,7 +141,7 @@ def generate_response(prompt_value):
         except Exception as err:
             print("Hugging Face error:", err)
 
-    return "I am experiencing high traffic right now. Please wait a few seconds and send your question again."
+    return "I am currently experiencing network delays. Please try asking your question again in a moment."
 
 
 llm = RunnableLambda(generate_response)
