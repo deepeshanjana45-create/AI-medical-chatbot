@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from langchain_core.runnables import RunnableLambda
 import os
 import requests
+import threading
 
 from src.prompt import *
 
@@ -14,10 +15,10 @@ app = Flask(__name__)
 
 
 # -----------------------------
-# API KEYS
+# API KEYS (handles typo PINECONE_APT_KEY as fallback)
 # -----------------------------
 
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -28,25 +29,39 @@ if HF_TOKEN:
 
 
 # -----------------------------
-# EMBEDDINGS & PINECONE (LAZY LOADED FOR FAST STARTUP)
+# EMBEDDINGS & PINECONE (THREAD-SAFE LAZY LOAD + BACKGROUND PRE-WARM)
 # -----------------------------
 
 index_name = "medicalbot"
 _embeddings = None
 _pinecone_index = None
+_lock = threading.Lock()
 
 def get_embeddings():
     global _embeddings
-    if _embeddings is None:
-        _embeddings = download_hugging_face_embeddings()
+    with _lock:
+        if _embeddings is None:
+            _embeddings = download_hugging_face_embeddings()
     return _embeddings
 
 def get_pinecone_index():
     global _pinecone_index
-    if _pinecone_index is None:
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        _pinecone_index = pc.Index(index_name)
+    with _lock:
+        if _pinecone_index is None:
+            key = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
+            pc = Pinecone(api_key=key)
+            _pinecone_index = pc.Index(index_name)
     return _pinecone_index
+
+# Pre-warm in background so first request is instant
+def _prewarm():
+    try:
+        get_embeddings()
+        get_pinecone_index()
+    except Exception as e:
+        print("Pre-warm background error:", e)
+
+threading.Thread(target=_prewarm, daemon=True).start()
 
 
 # -----------------------------
@@ -72,7 +87,8 @@ def generate_response(prompt_value):
             user_text += msg.content + "\n"
 
     # 1. Use Gemini (primary)
-    if GEMINI_API_KEY:
+    api_key = os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY
+    if api_key:
         models_to_try = [
             "gemini-flash-lite-latest",
             "gemini-flash-latest",
@@ -80,7 +96,7 @@ def generate_response(prompt_value):
         ]
         for model_name in models_to_try:
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
                 payload = {
                     "system_instruction": {
                         "parts": [{"text": system_text.strip()}]
@@ -101,14 +117,17 @@ def generate_response(prompt_value):
                         parts = candidates[0]["content"].get("parts", [])
                         if parts and "text" in parts[0]:
                             return parts[0]["text"].strip()
+                else:
+                    print(f"Gemini API {model_name} returned status {res.status_code}: {res.text[:100]}")
             except Exception as err:
                 print(f"Error calling {model_name}:", err)
 
     # 2. Fallback to Hugging Face if configured
-    if HF_TOKEN:
+    hf_tok = os.getenv("HF_TOKEN") or HF_TOKEN
+    if hf_tok:
         try:
             from huggingface_hub import InferenceClient
-            hf_client = InferenceClient(api_key=HF_TOKEN, provider="featherless-ai")
+            hf_client = InferenceClient(api_key=hf_tok, provider="featherless-ai")
             combined = f"System: {system_text}\nUser: {user_text}"
             response = hf_client.chat.completions.create(
                 model="Qwen/Qwen2.5-1.5B-Instruct",
@@ -120,7 +139,7 @@ def generate_response(prompt_value):
         except Exception as err:
             print("Hugging Face error:", err)
 
-    return "Sorry, I could not generate a response. Please try again."
+    return "I am currently unable to reach the medical language model. Please verify your GEMINI_API_KEY."
 
 
 llm = RunnableLambda(generate_response)
@@ -175,19 +194,19 @@ def home():
 @app.route("/get", methods=["GET", "POST"])
 def chat():
     try:
-        msg = request.form["msg"]
+        msg = request.form.get("msg") or (request.get_json(silent=True) or {}).get("msg", "")
+        if not msg:
+            return "Please enter a question."
         response = rag_chain.invoke({
             "input": msg
         })
         answer = str(response["answer"])
-        try:
-            print("Response:", answer[:150].encode("ascii", errors="replace").decode("ascii"))
-        except Exception:
-            pass
         return answer
     except Exception as e:
-        print("Error during chat processing:", e)
-        return "I apologize, but an error occurred while processing your request. Please try again."
+        import traceback
+        err_msg = traceback.format_exc()
+        print("Error during chat processing:\n", err_msg)
+        return "I apologize, but an error occurred while processing your request. Please check the server logs."
 
 
 # -----------------------------
