@@ -195,7 +195,8 @@
 
                 const response = await fetch("/get", {
                     method: "POST",
-                    body: formData
+                    body: formData,
+                    signal: AbortSignal.timeout(120000)
                 });
 
 

@@ -2,6 +2,7 @@ import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from flask import Flask, render_template, request
 from src.helper import download_hugging_face_embeddings
@@ -35,25 +36,33 @@ if PINECONE_API_KEY:
 
 
 # -----------------------------
-# EMBEDDINGS & PINECONE (BACKGROUND WARM-UP)
+# EMBEDDINGS & PINECONE (LAZY + THREAD-SAFE)
 # -----------------------------
 
 index_name = "medicalbot"
 _embeddings = None
 _pinecone_index = None
+_load_lock = threading.Lock()
 
 def get_embeddings():
     global _embeddings
     if _embeddings is None:
-        _embeddings = download_hugging_face_embeddings()
+        with _load_lock:
+            if _embeddings is None:
+                print("Loading fastembed model...")
+                _embeddings = download_hugging_face_embeddings()
+                print("fastembed model loaded OK")
     return _embeddings
 
 def get_pinecone_index():
     global _pinecone_index
     if _pinecone_index is None:
-        key = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
-        pc = Pinecone(api_key=key)
-        _pinecone_index = pc.Index(index_name)
+        with _load_lock:
+            if _pinecone_index is None:
+                key = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
+                pc = Pinecone(api_key=key)
+                _pinecone_index = pc.Index(index_name)
+                print("Pinecone index connected OK")
     return _pinecone_index
 
 # Pre-warm embeddings & index in a non-blocking background thread
@@ -61,6 +70,7 @@ def _prewarm():
     try:
         get_embeddings()
         get_pinecone_index()
+        print("Pre-warm complete")
     except Exception as e:
         print("Pre-warm background error:", e)
 
@@ -220,6 +230,15 @@ def is_greeting(text):
 @app.route("/")
 def home():
     return render_template("index.html")
+
+
+# -----------------------------
+# HEALTH CHECK (keeps Render worker alive)
+# -----------------------------
+
+@app.route("/ping")
+def ping():
+    return "pong", 200
 
 
 # -----------------------------
