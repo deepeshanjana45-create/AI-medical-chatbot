@@ -91,6 +91,7 @@ def generate_response(prompt_value):
     if api_key:
         models_to_try = [
             "gemini-flash-lite-latest",
+            "gemini-2.5-flash-lite",
             "gemini-flash-latest",
             "gemini-pro-latest"
         ]
@@ -109,7 +110,7 @@ def generate_response(prompt_value):
                         "temperature": 0.3
                     }
                 }
-                res = requests.post(url, json=payload, timeout=20)
+                res = requests.post(url, json=payload, timeout=35)
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -118,7 +119,7 @@ def generate_response(prompt_value):
                         if parts and "text" in parts[0]:
                             return parts[0]["text"].strip()
                 else:
-                    print(f"Gemini API {model_name} returned status {res.status_code}: {res.text[:100]}")
+                    print(f"Gemini API {model_name} status {res.status_code}: {res.text[:100]}")
             except Exception as err:
                 print(f"Error calling {model_name}:", err)
 
@@ -139,7 +140,7 @@ def generate_response(prompt_value):
         except Exception as err:
             print("Hugging Face error:", err)
 
-    return "I am currently unable to reach the medical language model. Please verify your GEMINI_API_KEY."
+    return "I am currently experiencing higher than usual traffic. Please try asking your question again in a moment."
 
 
 llm = RunnableLambda(generate_response)
