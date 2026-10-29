@@ -103,9 +103,9 @@ def generate_response(prompt_value):
     groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
         groq_models = [
+            "openai/gpt-oss-120b",   # Most capable, try first
             "openai/gpt-oss-20b",
             "qwen/qwen3.8-27b",
-            "openai/gpt-oss-120b"
         ]
         headers = {
             "Authorization": f"Bearer {groq_key}",
@@ -119,20 +119,27 @@ def generate_response(prompt_value):
                         {"role": "system", "content": system_text.strip()},
                         {"role": "user", "content": user_text.strip()}
                     ],
-                    "max_tokens": 300,
+                    "max_tokens": 512,
                     "temperature": 0.2
                 }
                 res = http_session.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers=headers,
                     json=groq_payload,
-                    timeout=10
+                    timeout=15
                 )
                 if res.status_code == 200:
                     data = res.json()
                     choices = data.get("choices", [])
                     if choices and "message" in choices[0]:
-                        return choices[0]["message"].get("content", "").strip()
+                        content = choices[0]["message"].get("content", "").strip()
+                        if content:          # ← KEY FIX: skip empty responses, try next model
+                            print(f"Groq {model} OK: {len(content)} chars")
+                            return content
+                        else:
+                            print(f"Groq {model} returned empty content, trying next model")
+                else:
+                    print(f"Groq {model} HTTP {res.status_code}: {res.text[:100]}")
             except Exception as err:
                 print(f"Groq {model} error:", err)
 
@@ -169,7 +176,8 @@ def generate_response(prompt_value):
             except Exception as err:
                 print(f"Gemini {model_name} error:", err)
 
-    return "I am currently experiencing high traffic. Please ensure GROQ_API_KEY is added to your Render Environment settings."
+    print("All LLM models failed or returned empty. Returning fallback message.")
+    return "I'm sorry, I couldn't generate a response right now. Please try again in a moment."
 
 
 llm = RunnableLambda(generate_response)
