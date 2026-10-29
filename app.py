@@ -24,12 +24,10 @@ http_session = requests.Session()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if PINECONE_API_KEY:
     os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
-if HF_TOKEN:
-    os.environ["HF_TOKEN"] = HF_TOKEN
 
 
 # -----------------------------
@@ -87,8 +85,8 @@ def generate_response(prompt_value):
         else:
             user_text += msg.content + "\n"
 
-    # 1. Groq (Ultra-Fast 100% Free ~0.8s)
-    groq_key = os.getenv("GROQ_API_KEY") or GROQ_API_KEY
+    # 1. Groq (Ultra-Fast ~0.8s) if key configured
+    groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
         groq_models = [
             "openai/gpt-oss-20b",
@@ -107,7 +105,7 @@ def generate_response(prompt_value):
                         {"role": "system", "content": system_text.strip()},
                         {"role": "user", "content": user_text.strip()}
                     ],
-                    "max_tokens": 350,
+                    "max_tokens": 300,
                     "temperature": 0.2
                 }
                 res = http_session.post(
@@ -124,24 +122,40 @@ def generate_response(prompt_value):
             except Exception as err:
                 print(f"Groq {model} error:", err)
 
-    # 2. Fallback to Hugging Face if configured
-    hf_tok = os.getenv("HF_TOKEN") or HF_TOKEN
-    if hf_tok:
-        try:
-            from huggingface_hub import InferenceClient
-            hf_client = InferenceClient(api_key=hf_tok, provider="featherless-ai")
-            combined = f"System: {system_text}\nUser: {user_text}"
-            response = hf_client.chat.completions.create(
-                model="Qwen/Qwen2.5-1.5B-Instruct",
-                messages=[{"role": "user", "content": combined}],
-                max_tokens=300,
-                temperature=0.3
-            )
-            return response.choices[0].message.content
-        except Exception as err:
-            print("Hugging Face error:", err)
+    # 2. Google Gemini fallback
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        models_to_try = [
+            "gemini-flash-lite-latest",
+            "gemini-flash-latest"
+        ]
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+        payload = {
+            "system_instruction": {"parts": [{"text": system_text.strip()}]},
+            "contents": [{"parts": [{"text": user_text.strip()}]}],
+            "safetySettings": safety_settings,
+            "generationConfig": {"maxOutputTokens": 300, "temperature": 0.2}
+        }
+        for model_name in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+                res = http_session.post(url, json=payload, timeout=25)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        parts = candidates[0]["content"].get("parts", [])
+                        if parts and "text" in parts[0]:
+                            return parts[0]["text"].strip()
+            except Exception as err:
+                print(f"Gemini {model_name} error:", err)
 
-    return "I am currently experiencing network delays. Please try asking your question again in a moment."
+    return "I am currently experiencing high traffic. Please check that GROQ_API_KEY or GEMINI_API_KEY is configured in your Render Environment settings."
 
 
 llm = RunnableLambda(generate_response)
@@ -215,7 +229,6 @@ def chat():
         if not msg:
             return "Please enter a question."
 
-        # Instant sub-second response for greetings without running heavy vector searches
         if is_greeting(msg):
             return "Hello! How can I help you with your health today?"
 
