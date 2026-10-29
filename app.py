@@ -1,9 +1,13 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 from flask import Flask, render_template, request
 from src.helper import download_hugging_face_embeddings
 from pinecone import Pinecone
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableLambda
-import os
 import requests
 import threading
 import re
@@ -155,7 +159,7 @@ def generate_response(prompt_value):
             except Exception as err:
                 print(f"Gemini {model_name} error:", err)
 
-    return "I am currently experiencing high traffic. Please check that GROQ_API_KEY or GEMINI_API_KEY is configured in your Render Environment settings."
+    return "I am currently experiencing high traffic. Please ensure GROQ_API_KEY is added to your Render Environment settings."
 
 
 llm = RunnableLambda(generate_response)

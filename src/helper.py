@@ -29,12 +29,13 @@ class FastEmbedEmbeddings:
     """Lightweight embeddings using fastembed (ONNX runtime, no PyTorch).
     Uses BAAI/bge-small-en-v1.5 which produces 384-dim vectors — compatible
     with the existing Pinecone index built on all-MiniLM-L6-v2 (also 384-dim).
+    threads=1 ensures zero threadpool deadlocks on Linux/Render containers.
     RAM usage: ~60MB vs ~500MB for sentence-transformers + PyTorch.
     """
 
     def __init__(self, model_name="BAAI/bge-small-en-v1.5"):
         from fastembed import TextEmbedding
-        self.model = TextEmbedding(model_name=model_name)
+        self.model = TextEmbedding(model_name=model_name, threads=1)
 
     def embed_query(self, text):
         embeddings = list(self.model.embed([text]))
