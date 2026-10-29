@@ -91,26 +91,35 @@ def generate_response(prompt_value):
     if api_key:
         models_to_try = [
             "gemini-flash-lite-latest",
-            "gemini-2.5-flash-lite",
             "gemini-flash-latest",
             "gemini-pro-latest"
         ]
+        
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": system_text.strip()}]
+            },
+            "contents": [
+                {"parts": [{"text": user_text.strip()}]}
+            ],
+            "safetySettings": safety_settings,
+            "generationConfig": {
+                "maxOutputTokens": 800,
+                "temperature": 0.3
+            }
+        }
+
         for model_name in models_to_try:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                payload = {
-                    "system_instruction": {
-                        "parts": [{"text": system_text.strip()}]
-                    },
-                    "contents": [
-                        {"parts": [{"text": user_text.strip()}]}
-                    ],
-                    "generationConfig": {
-                        "maxOutputTokens": 1000,
-                        "temperature": 0.3
-                    }
-                }
-                res = requests.post(url, json=payload, timeout=35)
+                res = requests.post(url, json=payload, timeout=45)
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -118,8 +127,25 @@ def generate_response(prompt_value):
                         parts = candidates[0]["content"].get("parts", [])
                         if parts and "text" in parts[0]:
                             return parts[0]["text"].strip()
+                elif res.status_code == 400:
+                    # Fallback without system_instruction if rejected
+                    simple_payload = {
+                        "contents": [
+                            {"parts": [{"text": f"{system_text.strip()}\n\n{user_text.strip()}"}]}
+                        ],
+                        "safetySettings": safety_settings,
+                        "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3}
+                    }
+                    res2 = requests.post(url, json=simple_payload, timeout=45)
+                    if res2.status_code == 200:
+                        data2 = res2.json()
+                        candidates2 = data2.get("candidates", [])
+                        if candidates2 and "content" in candidates2[0]:
+                            parts2 = candidates2[0]["content"].get("parts", [])
+                            if parts2 and "text" in parts2[0]:
+                                return parts2[0]["text"].strip()
                 else:
-                    print(f"Gemini API {model_name} status {res.status_code}: {res.text[:100]}")
+                    print(f"Gemini API {model_name} status {res.status_code}: {res.text[:120]}")
             except Exception as err:
                 print(f"Error calling {model_name}:", err)
 
@@ -140,7 +166,7 @@ def generate_response(prompt_value):
         except Exception as err:
             print("Hugging Face error:", err)
 
-    return "I am currently experiencing higher than usual traffic. Please try asking your question again in a moment."
+    return "I am experiencing high traffic right now. Please wait a few seconds and send your question again."
 
 
 llm = RunnableLambda(generate_response)
@@ -153,7 +179,8 @@ llm = RunnableLambda(generate_response)
 def format_docs(result):
     return "\n\n".join(
         match["metadata"]["text"]
-        for match in result["matches"]
+        for match in result.get("matches", [])
+        if "metadata" in match and "text" in match["metadata"]
     )
 
 
