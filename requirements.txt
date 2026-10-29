@@ -4,8 +4,6 @@ pypdf
 python-dotenv
 pinecone
 langchain-community
-langchain-openai
-langchain-experimental
 gunicorn
 fastembed
 requests
