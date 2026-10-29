@@ -6,6 +6,7 @@ from langchain_core.runnables import RunnableLambda
 import os
 import requests
 import threading
+import re
 
 from src.prompt import *
 
@@ -18,7 +19,7 @@ http_session = requests.Session()
 
 
 # -----------------------------
-# API KEYS (handles typo PINECONE_APT_KEY as fallback)
+# API KEYS
 # -----------------------------
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
@@ -32,31 +33,28 @@ if HF_TOKEN:
 
 
 # -----------------------------
-# EMBEDDINGS & PINECONE (THREAD-SAFE LAZY LOAD + BACKGROUND PRE-WARM)
+# EMBEDDINGS & PINECONE (BACKGROUND WARM-UP)
 # -----------------------------
 
 index_name = "medicalbot"
 _embeddings = None
 _pinecone_index = None
-_lock = threading.Lock()
 
 def get_embeddings():
     global _embeddings
-    with _lock:
-        if _embeddings is None:
-            _embeddings = download_hugging_face_embeddings()
+    if _embeddings is None:
+        _embeddings = download_hugging_face_embeddings()
     return _embeddings
 
 def get_pinecone_index():
     global _pinecone_index
-    with _lock:
-        if _pinecone_index is None:
-            key = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
-            pc = Pinecone(api_key=key)
-            _pinecone_index = pc.Index(index_name)
+    if _pinecone_index is None:
+        key = os.getenv("PINECONE_API_KEY") or os.getenv("PINECONE_APT_KEY")
+        pc = Pinecone(api_key=key)
+        _pinecone_index = pc.Index(index_name)
     return _pinecone_index
 
-# Pre-warm in background so first request is instant
+# Pre-warm embeddings & index in a non-blocking background thread
 def _prewarm():
     try:
         get_embeddings()
@@ -68,7 +66,7 @@ threading.Thread(target=_prewarm, daemon=True).start()
 
 
 # -----------------------------
-# RETRIEVER (top_k=2 for faster prompt processing)
+# RETRIEVER
 # -----------------------------
 
 retriever = RunnableLambda(
@@ -89,14 +87,13 @@ def generate_response(prompt_value):
         else:
             user_text += msg.content + "\n"
 
-    # 1. Use Gemini (primary)
     api_key = os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY
     if api_key:
         models_to_try = [
             "gemini-flash-lite-latest",
             "gemini-flash-latest"
         ]
-        
+
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -104,7 +101,6 @@ def generate_response(prompt_value):
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
 
-        # Optimized token budget: fast concise bullet points (350 tokens max)
         payload = {
             "system_instruction": {
                 "parts": [{"text": system_text.strip()}]
@@ -114,7 +110,7 @@ def generate_response(prompt_value):
             ],
             "safetySettings": safety_settings,
             "generationConfig": {
-                "maxOutputTokens": 350,
+                "maxOutputTokens": 300,
                 "temperature": 0.2
             }
         }
@@ -122,7 +118,7 @@ def generate_response(prompt_value):
         for model_name in models_to_try:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                res = http_session.post(url, json=payload, timeout=30)
+                res = http_session.post(url, json=payload, timeout=25)
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -136,9 +132,9 @@ def generate_response(prompt_value):
                             {"parts": [{"text": f"{system_text.strip()}\n\n{user_text.strip()}"}]}
                         ],
                         "safetySettings": safety_settings,
-                        "generationConfig": {"maxOutputTokens": 350, "temperature": 0.2}
+                        "generationConfig": {"maxOutputTokens": 300, "temperature": 0.2}
                     }
-                    res2 = http_session.post(url, json=simple_payload, timeout=30)
+                    res2 = http_session.post(url, json=simple_payload, timeout=25)
                     if res2.status_code == 200:
                         data2 = res2.json()
                         candidates2 = data2.get("candidates", [])
@@ -149,7 +145,6 @@ def generate_response(prompt_value):
             except Exception as err:
                 print(f"Error calling {model_name}:", err)
 
-    # 2. Fallback to Hugging Face if configured
     hf_tok = os.getenv("HF_TOKEN") or HF_TOKEN
     if hf_tok:
         try:
@@ -159,7 +154,7 @@ def generate_response(prompt_value):
             response = hf_client.chat.completions.create(
                 model="Qwen/Qwen2.5-1.5B-Instruct",
                 messages=[{"role": "user", "content": combined}],
-                max_tokens=350,
+                max_tokens=300,
                 temperature=0.3
             )
             return response.choices[0].message.content
@@ -207,6 +202,20 @@ rag_chain = (
 
 
 # -----------------------------
+# GREETING PATTERNS (INSTANT 0.005s RESPONSE)
+# -----------------------------
+
+GREETING_WORDS = {
+    "hi", "hii", "hiii", "hello", "helloo", "hey", "heyy", "heya",
+    "good morning", "good evening", "good afternoon", "greetings", "help"
+}
+
+def is_greeting(text):
+    cleaned = re.sub(r"[^\w\s]", "", text.strip().lower())
+    return cleaned in GREETING_WORDS
+
+
+# -----------------------------
 # HOME PAGE
 # -----------------------------
 
@@ -225,6 +234,11 @@ def chat():
         msg = request.form.get("msg") or (request.get_json(silent=True) or {}).get("msg", "")
         if not msg:
             return "Please enter a question."
+
+        # Instant sub-second response for greetings without running heavy vector searches
+        if is_greeting(msg):
+            return "Hello! How can I help you with your health today?"
+
         response = rag_chain.invoke({
             "input": msg
         })
